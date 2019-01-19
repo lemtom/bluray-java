@@ -1,0 +1,308 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<project name="HelloTVXlet" default="deploy" basedir=".">
+    
+    <!-- Property Definitions -->
+    <property file="build.properties"/>	
+    
+    <!-- xlet source dir, build dir, and a distribution dir for a disc image 
+    -->
+    <property name="src.dir"     value="src"/>  
+    <property name="build.dir"   value="build"/>
+    <property name="dist.dir"    value="dist"/>  
+    
+    <!-- properties for the xlet -->
+    <property name="xlet.name"      value="hellotvxlet.HelloTVXlet" />
+    
+    <!-- disc image related properties -->   
+    <!-- A default bdmv structure comes with no audio or video streams.
+    One can change "premade.bdmv" to point to another BDMV structore -->
+    <property name="premade.bdmv"    value="tools/DiscImage"/>   
+    
+    <!-- Unset these properties if your "premade.bdmv" property contains
+    id.bdmv, index.bdmv or MovieObject.bdmv files 
+    and you do not want them to be overwritten.  -->
+    <property name="id.xml"          value="tools/BDMVFiles/id.xml"/>
+    <property name="index.xml"       value="tools/BDMVFiles/index.xml"/>
+    <property name="movieobject.xml" value="tools/BDMVFiles/MovieObject.xml"/>
+
+    <property name="target.dir"     value="${dist.dir}/DiscImage"/>
+    <property name="bdjo.name"      value="00000"/>
+    <property name="xletjar.name"   value="00000"/>
+    <property name="orgid"          value="7fff0001"/>
+    <property name="bdtools.dir"    value="tools/BDTools"/>
+    <property name="bdjo-desc-file" value="${build.dir}/${bdjo.name}.xml"/>
+    <property name="xlet.jar"       value="${build.dir}/${xletjar.name}.jar"/>
+    
+    <!-- WinDVD executable default location, or in my case: VLC -->
+    <!-- <property name="WinDVD"         value="c:/Program Files/InterVideo/DVD8/WinDVD.exe"/> -->
+    <property name="WinDVD"         value="/usr/bin/vlc"/>
+    
+    <!-- Location of JDK1.7 or earlier --> 
+    <property name="OldJavaLocation"         value=" "/>
+    
+    <!-- java options for invoking tools in "bdtools.dir" -->
+    <presetdef name="jdktools.java">
+        <java fork="true" failOnError="true"/>
+    </presetdef>
+
+    <target name="init">
+        <tstamp/>
+        <mkdir dir="${build.dir}/classes"/> 
+        <mkdir dir="${target.dir}"/>
+    </target>
+    
+    <target name="clean">
+        <delete dir="${build.dir}"/>
+        <delete dir="${dist.dir}"/>
+        <delete file="${xlet.name}.zip"/>
+    </target>
+    
+    <target name="deploy" depends="bundle"/>
+    <target name="bundle" depends="jar, gen-bdjo-desc-file, 
+                                   sign-xlet, copy-to-bdmv"
+            description="Make an blu-ray disc image bundle">
+                
+        <zip destfile="${xlet.name}.zip"
+             basedir="${dist.dir}"/>
+    </target>    
+    
+    <target name="compile"
+            depends="init" description="Compiles the sources">
+        
+        <javac srcdir="${src.dir}"
+               classpath="${bdj.classes}"
+               destdir="${build.dir}/classes"
+               source="1.3" target="1.3"
+               debug="on" deprecation="on">
+        </javac>
+        
+        <copy todir="${build.dir}/classes">
+            <fileset dir="${src.dir}">
+                <include name="**/*.perm"/>
+            </fileset>
+        </copy>    
+    </target>
+    
+    <target name="jar"
+            depends="compile" 
+            description="Creates an xlet jar file">
+        <jar jarfile="${xlet.jar}"
+             basedir="${build.dir}/classes"/>
+    </target>
+    
+    <target name="sign-xlet"
+            description="Generates certificates and signs the xlet jar">    
+        
+        <path id="sec.tools.path">
+            <pathelement location="${bdtools.dir}/security.jar"/>
+            <pathelement location="${bdtools.dir}/bouncycastle/bcprov-jdk16-138.jar"/>
+            <!--<pathelement location="${java.home}/../lib/tools.jar"/>   -->
+            <pathelement location="${OldJavaLocation}/lib/tools.jar"/>
+        </path>	   
+
+        <jdktools.java classname="net.java.bd.tools.security.BDCertGenerator">
+            <arg value="-root"/>
+            <arg value="${orgid}"/>
+            <classpath refid="sec.tools.path"/>
+        </jdktools.java>
+        
+        <jdktools.java classname="net.java.bd.tools.security.BDCertGenerator">
+            <arg value="-app"/>
+            <arg value="${orgid}"/>
+            <classpath refid="sec.tools.path"/>
+        </jdktools.java>
+        
+        <jdktools.java classname="net.java.bd.tools.security.BDSigner">
+            <arg value="${xlet.jar}"/>
+            <classpath refid="sec.tools.path"/>	   
+        </jdktools.java>
+        
+    </target>  
+    
+    <target name="run" depends="bundle"
+            description="Makes a disc image and runs it using WinDVD">
+            
+        <available property="windvd.exists" file="${WinDVD}"/>
+        <fail unless="windvd.exists" message="WinDVD executable not found at ${WinDVD}."/>
+        <exec executable="${WinDVD}">
+            <!--<arg value="${basedir}/${dist.dir}/DiscImage/BDMV"/>-->
+            <arg value="bluray:///${basedir}/${dist.dir}/DiscImage/"/>
+            <arg value="--bluray-menu"/>
+        </exec>
+    </target>
+    
+    <target name="gen-bdjo-desc-file"
+            depends="gen-bdjo-desc.tmp"
+            if="update-bdjo-desc.file"
+            description="Creates a bdjo file from a generate xml file">
+        
+        <move file="${bdjo-desc-file}.tmp" tofile="${bdjo-desc-file}"/>
+        
+        <jdktools.java  
+            jar="${bdtools.dir}/bdjo.jar">
+            <arg value="${bdjo-desc-file}"/>
+            <arg value="${build.dir}/${bdjo.name}.bdjo"/>
+        </jdktools.java>
+    </target>
+    
+    <target name="generate-bdmv-files" 
+            depends="check-bdmv, 
+                 generate-id, generate-index, generate-movieobject"/>
+    <target name="check-bdmv"
+            description="Check whether xml files exist">
+        <available property="id.xml.exists" file="${id.xml}"/>
+        <available property="index.xml.exists" file="${index.xml}"/>
+        <available property="movieobject.xml.exists" file="${movieobject.xml}"/>
+    </target>
+ 
+    <target name="generate-id" if="id.xml.exists"
+            description="Create id.bdmv from a corresponding xml file">
+        <jdktools.java  
+            jar="${bdtools.dir}/id.jar">
+            <arg value="${id.xml}"/>
+            <arg value="${build.dir}/id.bdmv"/>
+        </jdktools.java>
+    </target>
+    <target name="generate-index" if="index.xml.exists"
+            description="Create index.bdmv from a corresponding xml file">
+        <jdktools.java  
+            jar="${bdtools.dir}/index.jar">
+            <arg value="${index.xml}"/>
+            <arg value="${build.dir}/index.bdmv"/>
+        </jdktools.java>
+    </target>
+    <target name="generate-movieobject" if="movieobject.xml.exists"
+            description="Create MovieObject.bdmv from a corresponding xml file">
+        <jdktools.java  
+            jar="${bdtools.dir}/movieobject.jar">
+            <arg value="${movieobject.xml}"/>
+            <arg value="${build.dir}/MovieObject.bdmv"/>
+        </jdktools.java>
+    </target>
+
+    <target name="copy-to-bdmv" 
+            depends="jar, gen-bdjo-desc-file, sign-xlet, generate-bdmv-files"
+            description="Assembles a BDMV disc structure">
+        
+        <!-- First, bring over all premade files in bdmv.  -->
+        <copy todir="${target.dir}">
+            <fileset dir="${premade.bdmv}">
+                <exclude name="**/.svn/**"/>
+            </fileset>
+        </copy>
+        
+        <!-- Make sure all needed subdirectories exist.  -->
+        <mkdir dir="${target.dir}/BDMV/AUXDATA"/>
+        <mkdir dir="${target.dir}/BDMV/BDJO"/>
+        <mkdir dir="${target.dir}/BDMV/CLIPINF"/>
+        <mkdir dir="${target.dir}/BDMV/JAR"/>
+        <mkdir dir="${target.dir}/BDMV/META"/>
+        <mkdir dir="${target.dir}/BDMV/PLAYLIST"/>
+        <mkdir dir="${target.dir}/BDMV/STREAM"/>
+        <mkdir dir="${target.dir}/CERTIFICATE"/>
+
+        <!-- Copy xlet jar and bdjo.  -->
+        <copy todir = "${target.dir}/BDMV/JAR" 
+              file="${xlet.jar}"/>
+        <copy todir = "${target.dir}/BDMV/BDJO" 
+              file="${build.dir}/${bdjo.name}.bdjo"/>           
+        <copy todir = "${target.dir}/CERTIFICATE" 
+              file="app.discroot.crt"/>
+
+        <!-- Copy bdmv description files if we geneated them from xml. -->
+        <copy todir="${target.dir}/BDMV"
+              file="${build.dir}/index.bdmv"
+              failonerror="false"/>
+        <copy todir="${target.dir}/BDMV"
+              file="${build.dir}/MovieObject.bdmv"
+              failonerror="false"/>
+        <copy todir="${target.dir}/CERTIFICATE"
+              file="${build.dir}/id.bdmv"
+              failonerror="false"/>
+
+        <!-- Make backup directories -->
+        <copy todir="${target.dir}/CERTIFICATE/BACKUP">
+            <fileset dir="${target.dir}/CERTIFICATE">
+                <include name="id.bdmv"/>
+                <include name="*.crt"/>
+            </fileset>            
+        </copy>
+        <copy todir="${target.dir}/BDMV/BACKUP">
+            <fileset dir="${target.dir}/BDMV">
+                <include name="index.bdmv"/>
+                <include name="MovieObject.bdmv"/>                
+                <include name="BDJO/**"/>  
+                <include name="CLIPINF/**"/>     
+                <include name="JAR/**"/> 
+                <include name="PLAYLIST/**"/>                    
+            </fileset>            
+        </copy> 
+
+    </target>    
+    
+    <target name="gen-bdjo-desc.tmp">
+        
+        <concat destfile="${bdjo-desc-file}.tmp"><![CDATA[<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- This file contains information determined at a build time -->
+<!-- AUTO-GENERATED - DO NOT EDIT -->
+
+<bdjo>
+    <appCacheInfo>
+        <entries>
+            <language>*.*</language>
+            <name>${xletjar.name}</name>
+            <type>1</type>
+        </entries>
+    </appCacheInfo>
+    <applicationManagementTable>
+        <applications>
+            <applicationDescriptor>
+                <baseDirectory>${xletjar.name}</baseDirectory>
+                <binding>TITLE_BOUND_DISC_BOUND</binding>
+                <classpathExtension></classpathExtension>
+                <iconFlags>0x0</iconFlags>
+                <iconLocator></iconLocator>
+                <initialClassName>${xlet.name}</initialClassName>
+                <priority>3</priority>
+                <profiles>
+                    <majorVersion>1</majorVersion>
+                    <microVersion>0</microVersion>
+                    <minorVersion>0</minorVersion>
+                    <profile>1</profile>
+                </profiles>
+                <visibility>V_01</visibility>
+            </applicationDescriptor>
+            <applicationId>0x4000</applicationId>
+            <controlCode>0x1</controlCode>
+            <organizationId>0x${orgid}</organizationId>
+            <type>0x1</type>
+        </applications>
+    </applicationManagementTable>
+    <fileAccessInfo>.</fileAccessInfo>
+    <keyInterestTable>0x0</keyInterestTable>
+    <tableOfAccessiblePlayLists>
+        <accessToAllFlag>false</accessToAllFlag>
+        <autostartFirstPlayListFlag>false</autostartFirstPlayListFlag>
+    </tableOfAccessiblePlayLists>
+    <terminalInfo>
+        <defaultFontFile>00000</defaultFontFile>
+        <initialHaviConfig>HD_1920_1080</initialHaviConfig>
+        <menuCallMask>false</menuCallMask>
+        <titleSearchMask>false</titleSearchMask>
+    </terminalInfo>
+    <version>V_0200</version>
+</bdjo>
+
+        ]]></concat>
+        
+        <condition property="update-bdjo-desc.file">
+            <not>
+                <filesmatch
+                    file1="${bdjo-desc-file}.tmp"
+                    file2="${bdjo-desc-file}"/>
+            </not>
+        </condition>
+    </target>
+    
+</project>
